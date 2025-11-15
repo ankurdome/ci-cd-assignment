@@ -1,0 +1,76 @@
+pipeline {
+    agent any
+    
+    environment {
+        AWS_REGION = "ap-south-1"
+        AWS_ACCOUNT_ID = "005199274432"
+        ECR_REPO = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/myapp-repo"
+        IMAGE_TAG = "latest"
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    sh 'docker build -t myapp:${IMAGE_TAG} .'
+                }
+            }
+        }
+        
+        stage('Login to ECR') {
+            steps {
+                script {
+                    withAWS(credentials: 'aws-credentials', region: "${AWS_REGION}") {
+                        sh '''
+                            aws ecr get-login-password --region ${AWS_REGION} | \
+                            docker login --username AWS --password-stdin ${ECR_REPO}
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Tag and Push to ECR') {
+            steps {
+                script {
+                    sh '''
+                        docker tag myapp:${IMAGE_TAG} ${ECR_REPO}:${IMAGE_TAG}
+                        docker push ${ECR_REPO}:${IMAGE_TAG}
+                    '''
+                }
+            }
+        }
+        
+        stage('Deploy with Terraform') {
+            steps {
+                dir('terraform') {
+                    withAWS(credentials: 'aws-credentials', region: "${AWS_REGION}") {
+                        sh '''
+                            terraform init
+                            terraform plan
+                            terraform apply -auto-approve
+                        '''
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo '✅ Pipeline executed successfully!'
+        }
+        failure {
+            echo '❌ Pipeline failed!'
+        }
+        always {
+            cleanWs()
+        }
+    }
+}
